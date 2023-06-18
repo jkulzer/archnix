@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/Jguer/go-alpm/v2"
+	"github.com/sergi/go-diff/diffmatchpatch"
 	"os"
 )
 
@@ -19,7 +20,6 @@ func main() {
 	overwriteState := writeStateFlagSet.Bool("overwrite", false, "overwrite existing package state file")
 	writeStateFlagSet.Parse(os.Args[2:])
 	flag.Parse()
-
 
 	if len(os.Args) < 2 {
 		fmt.Println("Expected an argument. Refer to --help for an overview")
@@ -65,6 +65,7 @@ func getDesiredPackageList() (desiredPackageList string) {
 	readPackageList, err := os.ReadFile("/var/lib/archnix/packages.json")
 	if err != nil {
 		fmt.Println(err)
+		os.Exit(1)
 	}
 
 	desiredPackageList = string(readPackageList)
@@ -72,7 +73,9 @@ func getDesiredPackageList() (desiredPackageList string) {
 }
 
 func diffPackageList(desiredPackageList string, currentPackageList string) {
-
+	dmp := diffmatchpatch.New()
+	diffs := dmp.DiffMain(desiredPackageList, currentPackageList, true)
+	fmt.Println(dmp.DiffToDelta(diffs))
 }
 
 func getInstalledPackages(enableMultilib *bool) (installedPackages string) {
@@ -80,6 +83,7 @@ func getInstalledPackages(enableMultilib *bool) (installedPackages string) {
 	h, err := alpm.Initialize("/", "/var/lib/pacman")
 	if err != nil {
 		fmt.Println(err)
+		os.Exit(1)
 		return
 	}
 	defer h.Release()
@@ -92,22 +96,23 @@ func getInstalledPackages(enableMultilib *bool) (installedPackages string) {
 		h.RegisterSyncDB("multilib", 0)
 	}
 
+	var allPackagesJSON []Package
+
 	for _, pkg := range db.PkgCache().Slice() {
 
-		packages := &Package{
+		singlePackageJSON := Package{
 			Name:    pkg.Name(),
 			Version: pkg.Version(),
 		}
 
-		var err error
-
-		data, err := json.MarshalIndent(packages, "", "\t")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		installedPackages = string(data) + "\n" + string(installedPackages)
+		allPackagesJSON = append(allPackagesJSON, singlePackageJSON)
 	}
+	packageData, err := json.MarshalIndent(allPackagesJSON, "", "\t")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+		return
+	}
+	installedPackages = string(packageData)
 	return installedPackages
 }
