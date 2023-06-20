@@ -1,29 +1,32 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/Jguer/go-alpm/v2"
-	"github.com/sergi/go-diff/diffmatchpatch"
 	"os"
+
+	yaml "gopkg.in/yaml.v3"
+
+	"github.com/Jguer/go-alpm/v2"
+	"github.com/google/go-cmp/cmp"
 )
 
 type Package struct {
-	Name    string `json:"packageName"`
-	Version string `json:"packageVersion"`
+	Name    string `yaml:"packageName"`
+	Version string `yaml:"packageVersion"`
 }
 
 func main() {
 	enableMultilib := flag.Bool("multilib", false, "enable the multilib repo")
 	writeStateFlagSet := flag.NewFlagSet("write-state", flag.ExitOnError)
 	overwriteState := writeStateFlagSet.Bool("overwrite", false, "overwrite existing package state file")
-	writeStateFlagSet.Parse(os.Args[2:])
 	flag.Parse()
 
 	if len(os.Args) < 2 {
 		fmt.Println("Expected an argument. Refer to --help for an overview")
 		os.Exit(1)
+	} else {
+		writeStateFlagSet.Parse(os.Args[2:])
 	}
 
 	switch os.Args[1] {
@@ -42,44 +45,48 @@ func main() {
 
 }
 
-func writePackageList(packageList string, overwriteState *bool) {
+func writePackageList(packageList []byte, overwriteState *bool) {
 	if _, err := os.Stat("/var/lib/archnix"); os.IsNotExist(err) {
 		os.Mkdir("/var/lib/archnix", 0750)
 	}
 
-	if _, err := os.Stat("/var/lib/archnix/packages.json"); err == nil {
+	if _, err := os.Stat("/var/lib/archnix/packages.yaml"); err == nil {
 
 		if *overwriteState {
-			os.WriteFile("/var/lib/archnix/packages.json", []byte(packageList), 0750)
+			os.WriteFile("/var/lib/archnix/packages.yaml", packageList, 0750)
 		} else {
-			fmt.Println("A state file exists. \nPass -overwrite-state to overwrite the current state.")
+			fmt.Println("A state file exists. \nPass -overwrite to overwrite the current state.")
 		}
 
 	} else {
-		os.WriteFile("/var/lib/archnix/packages.json", []byte(packageList), 0750)
+		os.WriteFile("/var/lib/archnix/packages.yaml", packageList, 0750)
 	}
 
 }
 
-func getDesiredPackageList() (desiredPackageList string) {
-	readPackageList, err := os.ReadFile("/var/lib/archnix/packages.json")
+func getDesiredPackageList() (desiredPackageList []byte) {
+	readPackageList, err := os.ReadFile("/var/lib/archnix/packages.yaml")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	desiredPackageList = string(readPackageList)
+	desiredPackageList = readPackageList
 	return desiredPackageList
 }
 
-func diffPackageList(desiredPackageList string, currentPackageList string) {
-	dmp := diffmatchpatch.New()
-	diffs := dmp.DiffMain(desiredPackageList, currentPackageList, true)
-	fmt.Println(dmp.DiffToDelta(diffs))
+func diffPackageList(desiredPackageList []byte, currentPackageList []byte) {
+
+	if !cmp.Equal(desiredPackageList, currentPackageList) {
+		fmt.Println(cmp.Diff(currentPackageList, desiredPackageList))
+	} else {
+		fmt.Println("State up to date")
+	}
 }
 
-func getInstalledPackages(enableMultilib *bool) (installedPackages string) {
+func getInstalledPackages(enableMultilib *bool) (installedPackages []byte) {
 
+	//this initializes alpm
 	h, err := alpm.Initialize("/", "/var/lib/pacman")
 	if err != nil {
 		fmt.Println(err)
@@ -88,31 +95,36 @@ func getInstalledPackages(enableMultilib *bool) (installedPackages string) {
 	}
 	defer h.Release()
 
-	db, _ := h.RegisterSyncDB("core", 0)
-	h.RegisterSyncDB("community", 0)
-	h.RegisterSyncDB("extra", 0)
-	h.RegisterSyncDB("extra", 0)
-	if *enableMultilib {
-		h.RegisterSyncDB("multilib", 0)
+	//defines the db as the local one where pacman stores its (installed) packages
+	db, err := h.LocalDB()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
-	var allPackagesJSON []Package
+	var allPackagesYaml []Package
 
+	//runs through every package present in the database (means is installed)
 	for _, pkg := range db.PkgCache().Slice() {
 
-		singlePackageJSON := Package{
-			Name:    pkg.Name(),
-			Version: pkg.Version(),
-		}
+		// pkg.Reason is 0 if the package was explicitly installed (not as a dependency)
+		// this means that only packages which were explicity installed get added to the list
+		//(dependencies will get automatically installed and orphans automatically removed)
+		if pkg.Reason() == 0 {
 
-		allPackagesJSON = append(allPackagesJSON, singlePackageJSON)
+			singlePackageYAML := Package{
+				Name:    pkg.Name(),
+				Version: pkg.Version(),
+			}
+
+			allPackagesYaml = append(allPackagesYaml, singlePackageYAML)
+		}
 	}
-	packageData, err := json.MarshalIndent(allPackagesJSON, "", "\t")
+	packageData, err := yaml.Marshal(allPackagesYaml)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 		return
 	}
-	installedPackages = string(packageData)
-	return installedPackages
+	return packageData
 }
