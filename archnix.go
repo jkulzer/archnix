@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/user"
 
 	yaml "gopkg.in/yaml.v3"
 
@@ -12,8 +13,7 @@ import (
 )
 
 type Package struct {
-	Name    string `yaml:"packageName"`
-	Version string `yaml:"packageVersion"`
+	Name string `yaml:"packageName"`
 }
 
 func main() {
@@ -23,24 +23,64 @@ func main() {
 	flag.Parse()
 
 	if len(os.Args) < 2 {
-		fmt.Println("Expected an argument. Refer to --help for an overview")
+		//implement the subcommands actually showing
+		fmt.Println("Expected an\n - write-state\n - diff-state\n - apply-state\n - show-state\n\tsubcommand. Refer to --help for an overview")
 		os.Exit(1)
 	} else {
 		writeStateFlagSet.Parse(os.Args[2:])
 	}
 
-	switch os.Args[1] {
+	//this whole thing is needed so the program doesn't run as root (causes problems with yay and makepkg)
+	currentUser, err := user.Current()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	var runningAsRoot bool
+	if currentUser.Uid == "0" {
+		runningAsRoot = true
+	}
 
+	//TODO
+	//feature is disabled for testing
+	runningAsRoot = false
+
+	switch os.Args[1] {
 	case "write-state":
+		if runningAsRoot == true {
+			fmt.Println("Do not run as root")
+			os.Exit(1)
+		}
 		packageList := getInstalledPackages(enableMultilib)
 		writePackageList(packageList, overwriteState)
 	case "diff-state":
+		if runningAsRoot == true {
+			fmt.Println("Do not run as root")
+			os.Exit(1)
+		}
 		desiredPackageList := getDesiredPackageList()
 		currentPackageList := getInstalledPackages(enableMultilib)
-		diffPackageList(desiredPackageList, currentPackageList)
+		toInstall, toRemove := diffPackageList(desiredPackageList, currentPackageList)
+		fmt.Println("Packages to Install:")
+		fmt.Println(string(toInstall))
+		fmt.Println("Packages to Remove:")
+		fmt.Println(string(toRemove))
 	case "show-state":
+		if runningAsRoot == true {
+			fmt.Println("Do not run as root")
+			os.Exit(1)
+		}
 		currentPackageList := getInstalledPackages(enableMultilib)
 		showState(currentPackageList)
+	case "apply-state":
+		if runningAsRoot == true {
+			fmt.Println("Do not run as root")
+			os.Exit(1)
+		}
+		desiredPackageList := getDesiredPackageList()
+		currentPackageList := getInstalledPackages(enableMultilib)
+		toInstall, toRemove := diffPackageList(desiredPackageList, currentPackageList)
+		applyState(toInstall, toRemove)
 	default:
 		fmt.Println(os.Args[1] + " is an invalid argument. Refer to --help for instructions")
 		os.Exit(1)
@@ -78,13 +118,7 @@ func getDesiredPackageList() (desiredPackageList []byte) {
 	return desiredPackageList
 }
 
-type PackageChange struct {
-	Name            string `yaml:"packageName"`
-	PreviousVersion string `yaml:"previousVersion"`
-	NewVersion      string `yaml:"newVersion"`
-}
-
-func diffPackageList(desiredPackageList []byte, currentPackageList []byte) {
+func diffPackageList(desiredPackageList []byte, currentPackageList []byte) (packagesToAdd []byte, packagesToRemove []byte) {
 
 	var currentPackagesStruct, desiredPackagesStruct []Package
 
@@ -100,28 +134,27 @@ func diffPackageList(desiredPackageList []byte, currentPackageList []byte) {
 
 	var removals []Package
 	var additions []Package
-	var changes []PackageChange
 
+	//this goes through every package in the desired state
 	for _, desiredPkg := range desiredPackagesStruct {
+		//sets found to false per default
 		found := false
+		//this runs once for every package in the desired package list
+		//if the name of the desired package of the root loop matches any one of the ones in the current packages, the loop exits
 		for _, currentPkg := range currentPackagesStruct {
 			if desiredPkg.Name == currentPkg.Name {
 				found = true
-				if desiredPkg.Version != currentPkg.Version {
-					changes = append(changes, PackageChange{
-						Name:            desiredPkg.Name,
-						PreviousVersion: currentPkg.Version,
-						NewVersion:      desiredPkg.Version,
-					})
-				}
 				break
 			}
 		}
+		//if no package matches (the loop exits without any package being found),
+		//the found := false carries over and triggers the append below
 		if !found {
 			additions = append(additions, desiredPkg)
 		}
 	}
 
+	//thesame steps as above get repeated for packages getting removed
 	for _, currentPkg := range currentPackagesStruct {
 		found := false
 		for _, desiredPkg := range desiredPackagesStruct {
@@ -145,19 +178,7 @@ func diffPackageList(desiredPackageList []byte, currentPackageList []byte) {
 		log.Fatal(err)
 	}
 
-	changesOutput, err := yaml.Marshal(&changes)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Removals:")
-	fmt.Println(string(removalsOutput))
-
-	fmt.Println("Additions:")
-	fmt.Println(string(additionsOutput))
-
-	fmt.Println("Changes:")
-	fmt.Println(string(changesOutput))
+	return additionsOutput, removalsOutput
 }
 
 func getInstalledPackages(enableMultilib *bool) (installedPackages []byte) {
@@ -189,8 +210,7 @@ func getInstalledPackages(enableMultilib *bool) (installedPackages []byte) {
 		if pkg.Reason() == 0 {
 
 			singlePackageYAML := Package{
-				Name:    pkg.Name(),
-				Version: pkg.Version(),
+				Name: pkg.Name(),
 			}
 
 			allPackagesYaml = append(allPackagesYaml, singlePackageYAML)
@@ -209,4 +229,7 @@ func showState(currentPackageList []byte) {
 	fmt.Println(
 		fmt.Sprintf(string(currentPackageList)),
 	)
+}
+
+func applyState(toInstall []byte, toRemove []byte) {
 }
