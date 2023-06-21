@@ -3,12 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 
 	yaml "gopkg.in/yaml.v3"
 
 	"github.com/Jguer/go-alpm/v2"
-	"github.com/google/go-cmp/cmp"
 )
 
 type Package struct {
@@ -38,6 +39,9 @@ func main() {
 		desiredPackageList := getDesiredPackageList()
 		currentPackageList := getInstalledPackages(enableMultilib)
 		diffPackageList(desiredPackageList, currentPackageList)
+	case "show-state":
+		currentPackageList := getInstalledPackages(enableMultilib)
+		showState(currentPackageList)
 	default:
 		fmt.Println(os.Args[1] + " is an invalid argument. Refer to --help for instructions")
 		os.Exit(1)
@@ -75,13 +79,103 @@ func getDesiredPackageList() (desiredPackageList []byte) {
 	return desiredPackageList
 }
 
+type PackageChange struct {
+	Name            string `yaml:"packageName"`
+	PreviousVersion string `yaml:"previousVersion"`
+	NewVersion      string `yaml:"newVersion"`
+}
+
 func diffPackageList(desiredPackageList []byte, currentPackageList []byte) {
 
-	if !cmp.Equal(desiredPackageList, currentPackageList) {
-		fmt.Println(cmp.Diff(currentPackageList, desiredPackageList))
-	} else {
-		fmt.Println("State up to date")
+	var currentPackagesStruct, desiredPackagesStruct []Package
+
+	err := yaml.Unmarshal(currentPackageList, &currentPackagesStruct)
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	err = yaml.Unmarshal(desiredPackageList, &desiredPackagesStruct)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var removals []Package
+	var additions []Package
+	var changes []PackageChange
+
+	for _, desiredPkg := range desiredPackagesStruct {
+		found := false
+		for _, currentPkg := range currentPackagesStruct {
+			if desiredPkg.Name == currentPkg.Name {
+				found = true
+				if desiredPkg.Version != currentPkg.Version {
+					changes = append(changes, PackageChange{
+						Name:            desiredPkg.Name,
+						PreviousVersion: currentPkg.Version,
+						NewVersion:      desiredPkg.Version,
+					})
+				}
+				break
+			}
+		}
+		if !found {
+			additions = append(additions, desiredPkg)
+		}
+	}
+
+	for _, currentPkg := range currentPackagesStruct {
+		found := false
+		for _, desiredPkg := range desiredPackagesStruct {
+			if desiredPkg.Name == currentPkg.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			removals = append(removals, currentPkg)
+		}
+	}
+
+	removalsOutput, err := yaml.Marshal(&removals)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	additionsOutput, err := yaml.Marshal(&additions)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	changesOutput, err := yaml.Marshal(&changes)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Removals:")
+	fmt.Println(string(removalsOutput))
+
+	fmt.Println("Additions:")
+	fmt.Println(string(additionsOutput))
+
+	fmt.Println("Changes:")
+	fmt.Println(string(changesOutput))
+}
+
+func extractPackageVersion(line string) string {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) == 2 {
+		return strings.TrimSpace(parts[1])
+	}
+	return ""
+}
+
+func getAssociatedPackageName(packageVersion string, packages []Package) string {
+	for _, pkg := range packages {
+		if pkg.Version == packageVersion {
+			return pkg.Name
+		}
+	}
+	return ""
 }
 
 func getInstalledPackages(enableMultilib *bool) (installedPackages []byte) {
@@ -127,4 +221,10 @@ func getInstalledPackages(enableMultilib *bool) (installedPackages []byte) {
 		return
 	}
 	return packageData
+}
+
+func showState(currentPackageList []byte) {
+	fmt.Println(
+		fmt.Sprintf(string(currentPackageList)),
+	)
 }
