@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 
 	yaml "gopkg.in/yaml.v3"
 
@@ -159,23 +158,6 @@ func diffPackageList(desiredPackageList []byte, currentPackageList []byte) {
 
 	fmt.Println("Changes:")
 	fmt.Println(string(changesOutput))
-}
-
-func extractPackageVersion(line string) string {
-	parts := strings.SplitN(line, ":", 2)
-	if len(parts) == 2 {
-		return strings.TrimSpace(parts[1])
-	}
-	return ""
-}
-
-func getAssociatedPackageName(packageVersion string, packages []Package) string {
-	for _, pkg := range packages {
-		if pkg.Version == packageVersion {
-			return pkg.Name
-		}
-	}
-	return ""
 }
 
 func getInstalledPackages(enableMultilib *bool) (installedPackages []byte) {
