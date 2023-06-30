@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/user"
 
 	yaml "gopkg.in/yaml.v3"
@@ -13,7 +14,7 @@ import (
 )
 
 type Package struct {
-	Name string `yaml:"packageName"`
+	Name string `yaml:"package"`
 }
 
 func main() {
@@ -24,7 +25,7 @@ func main() {
 
 	if len(os.Args) < 2 {
 		//implement the subcommands actually showing
-		fmt.Println("Expected an\n - write-state\n - diff-state\n - apply-state\n - show-state\n\tsubcommand. Refer to --help for an overview")
+		fmt.Println("Expected an\n - write\n - diff\n - apply\n - show\n\tsubcommand. Refer to --help for an overview")
 		os.Exit(1)
 	} else {
 		writeStateFlagSet.Parse(os.Args[2:])
@@ -46,14 +47,14 @@ func main() {
 	runningAsRoot = false
 
 	switch os.Args[1] {
-	case "write-state":
+	case "write":
 		if runningAsRoot == true {
 			fmt.Println("Do not run as root")
 			os.Exit(1)
 		}
 		packageList := getInstalledPackages(enableMultilib)
 		writePackageList(packageList, overwriteState)
-	case "diff-state":
+	case "diff":
 		if runningAsRoot == true {
 			fmt.Println("Do not run as root")
 			os.Exit(1)
@@ -61,18 +62,16 @@ func main() {
 		desiredPackageList := getDesiredPackageList()
 		currentPackageList := getInstalledPackages(enableMultilib)
 		toInstall, toRemove := diffPackageList(desiredPackageList, currentPackageList)
-		fmt.Println("Packages to Install:")
-		fmt.Println(string(toInstall))
-		fmt.Println("Packages to Remove:")
-		fmt.Println(string(toRemove))
-	case "show-state":
+
+		printPackageDiff(toInstall, toRemove)
+	case "state":
 		if runningAsRoot == true {
 			fmt.Println("Do not run as root")
 			os.Exit(1)
 		}
 		currentPackageList := getInstalledPackages(enableMultilib)
 		showState(currentPackageList)
-	case "apply-state":
+	case "apply":
 		if runningAsRoot == true {
 			fmt.Println("Do not run as root")
 			os.Exit(1)
@@ -193,6 +192,7 @@ func getInstalledPackages(enableMultilib *bool) (installedPackages []byte) {
 	defer h.Release()
 
 	//defines the db as the local one where pacman stores its (installed) packages
+	//otherwise you would get all the packages in the Arch Linux repos
 	db, err := h.LocalDB()
 	if err != nil {
 		fmt.Println(err)
@@ -232,4 +232,68 @@ func showState(currentPackageList []byte) {
 }
 
 func applyState(toInstall []byte, toRemove []byte) {
+
+	var packagesToInstall []Package
+	err := yaml.Unmarshal(toInstall, &packagesToInstall)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var packagesToInstallPacmanList string
+
+	for _, pkgToRemove := range packagesToInstall {
+		packagesToInstallPacmanList = packagesToInstallPacmanList + string(pkgToRemove.Name) + " "
+	}
+
+	if packagesToInstallPacmanList != "" {
+		pacmanCommandToInstall := "yay -S --noconfirm" + " " + packagesToInstallPacmanList
+		fmt.Println("Packages getting installed: " + packagesToInstallPacmanList)
+		cmd := exec.Command("bash", "-c", pacmanCommandToInstall)
+		cmd.Stdin = os.Stdin
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+	} else {
+		fmt.Println("No packages getting installed")
+	}
+
+	var packagesToRemove []Package
+	err = yaml.Unmarshal(toRemove, &packagesToRemove)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var packagesToRemovePacmanList string
+
+	for _, pkgToRemove := range packagesToRemove {
+		packagesToRemovePacmanList = packagesToRemovePacmanList + string(pkgToRemove.Name) + " "
+	}
+
+	if packagesToRemovePacmanList != "" {
+		pacmanCommandToRemove := "yay -Rsn --noconfirm" + " " + packagesToRemovePacmanList
+		fmt.Println("Packages getting removed: " + packagesToRemovePacmanList)
+		cmd := exec.Command("bash", "-c", pacmanCommandToRemove)
+		cmd.Stdin = os.Stdin
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+	} else {
+		fmt.Println("No packages getting removed")
+	}
+}
+
+func printPackageDiff(toInstall []byte, toRemove []byte) {
+	if string(toInstall) != "[]" {
+		fmt.Println(
+			string(toInstall),
+		)
+	} else {
+		fmt.Println("No packages to install")
+	}
+
+	if string(toRemove) != "[]" {
+		fmt.Println(
+			string(toRemove),
+		)
+	} else {
+		fmt.Println("No packages to remove")
+	}
 }
