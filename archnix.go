@@ -11,10 +11,30 @@ import (
 	yaml "gopkg.in/yaml.v3"
 
 	"github.com/Jguer/go-alpm/v2"
+	git "github.com/go-git/go-git/v5"
 )
 
 type Package struct {
 	Name string `yaml:"package"`
+}
+
+type Config struct {
+	PackageList
+}
+
+type PackageList struct {
+	Source           string `yaml:"source"`
+	GitConfig        GitConfig
+	FilesystemConfig FilesystemConfig
+}
+
+type FilesystemConfig struct {
+	Path string `yaml:"path"`
+}
+
+type GitConfig struct {
+	Repository string `yaml:"repository"`
+	Path       string `yaml:"path"`
 }
 
 func main() {
@@ -80,6 +100,8 @@ func main() {
 		currentPackageList := getInstalledPackages(enableMultilib)
 		toInstall, toRemove := diffPackageList(desiredPackageList, currentPackageList)
 		applyState(toInstall, toRemove)
+	case "git":
+		getSourceFromGit()
 	default:
 		fmt.Println(os.Args[1] + " is an invalid argument. Refer to --help for instructions")
 		os.Exit(1)
@@ -296,4 +318,42 @@ func printPackageDiff(toInstall []byte, toRemove []byte) {
 	} else {
 		fmt.Println("No packages to remove")
 	}
+}
+
+func getSourceFromGit() {
+	gitUrl := "https://github.com/jkulzer/dotfiles"
+
+	_, err := git.PlainClone(
+		"/tmp/archnix/sourceState",
+		false,
+		&git.CloneOptions{
+			URL:   gitUrl,
+			Depth: 1,
+		},
+	)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+
+}
+
+func parseConfig() {
+	if _, err := os.Stat("/etc/archnix"); os.IsNotExist(err) {
+		os.Mkdir("/etc/archnix", 0750)
+	}
+
+	defaultConfig := `
+config:
+
+
+	`
+
+	if _, err := os.Stat("/etc/archnix/config.yaml"); err == nil {
+
+		os.WriteFile("/etc/archnix/config.yaml", []byte(defaultConfig), 0750)
+
+	}
+
+	//var config []Config
 }
